@@ -24,5 +24,8 @@ publish/
 *.log
 build_aot.bat
 
+# Zip
+*.zip
+
 # VS files
 .vs/

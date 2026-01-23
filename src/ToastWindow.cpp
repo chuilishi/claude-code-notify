@@ -13,6 +13,7 @@
 // USAGE:
 //   ToastWindow.exe --save      Save window state (UserPromptSubmit hook)
 //   ToastWindow.exe --notify    Show notification (Stop hook)
+//   ToastWindow.exe --input     Show input-required notification (Notification hook)
 //
 // FEATURES:
 //   - Session-based state isolation (multiple Claude instances supported)
@@ -83,6 +84,7 @@ static BYTE g_alpha = 230;
 // Runtime state
 static bool g_debug = false;
 static bool g_clicked = false;
+static bool g_inputMode = false;  // True for input-required notifications (yellow theme)
 static HWND g_immediateHwnd = NULL;  // Captured at program start before any delay
 
 // Window handles
@@ -784,8 +786,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         FillRect(hdc, &rect, bgBrush);
         DeleteObject(bgBrush);
 
-        // Orange border
-        HBRUSH borderBrush = CreateSolidBrush(0x004B64B2);
+        // Border color: Yellow (0x00CFCF) for input mode, Orange (0x4B64B2) for normal
+        COLORREF borderColor = g_inputMode ? 0x0000CFCF : 0x004B64B2;
+        HBRUSH borderBrush = CreateSolidBrush(borderColor);
         RECT borders[] = {
             { 0, 0, g_windowWidth, 2 },
             { 0, g_windowHeight - 2, g_windowWidth, g_windowHeight },
@@ -1337,6 +1340,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     // Parse arguments
     bool saveMode = false;
     bool notifyMode = false;
+    bool inputMode = false;       // Notification hook (input required)
     bool notifyShowMode = false;  // Internal: actually show the toast
 
     for (int i = 1; i < argc; i++) {
@@ -1346,8 +1350,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             saveMode = true;
         } else if (arg == L"--notify") {
             notifyMode = true;
+        } else if (arg == L"--input") {
+            inputMode = true;
         } else if (arg == L"--notify-show") {
             notifyShowMode = true;  // Internal flag for spawned process
+        } else if (arg == L"--input-mode") {
+            g_inputMode = true;     // Internal flag for input style
         } else if (arg == L"--debug" || arg == L"-d") {
             g_debug = true;
             wchar_t exePath[MAX_PATH];
@@ -1418,6 +1426,49 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         return 0;  // Exit immediately
     }
 
+    if (inputMode) {
+        // Read JSON from stdin to get session_id (same as notifyMode but with input style)
+        std::string jsonInput = ReadStdinJson();
+        g_sessionId = ExtractJsonStringValue(jsonInput, "session_id");
+
+        if (g_sessionId.empty()) {
+            Log(L"[DEBUG] No session_id in stdin JSON, cannot show notification");
+            CoUninitialize();
+            return 1;
+        }
+
+        Log(L"[DEBUG] Input mode, session_id: %ls", g_sessionId.c_str());
+
+        // Build command line for child process - pass session ID and input-mode flag
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(NULL, exePath, MAX_PATH);
+
+        std::wstring cmdLine = L"\"";
+        cmdLine += exePath;
+        cmdLine += L"\" --notify-show --input-mode --session \"";
+        cmdLine += g_sessionId;
+        cmdLine += L"\"";
+        if (g_debug) {
+            cmdLine += L" --debug";
+        }
+
+        // Create detached process
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+
+        if (CreateProcessW(NULL, (LPWSTR)cmdLine.c_str(), NULL, NULL, FALSE,
+                          CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+                          NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
+
+        CoUninitialize();
+        return 0;  // Exit immediately
+    }
+
     if (notifyShowMode) {
         // Session ID was already parsed above
         if (g_sessionId.empty()) {
@@ -1430,23 +1481,35 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         LoadState(g_sessionId);
 
         // Use user prompt as message (truncated if needed)
-        if (g_userPrompt.empty()) {
-            g_message = L"Task completed";
-        } else {
-            g_message = g_userPrompt;
-            // Replace newlines with spaces for single-line display
-            for (size_t i = 0; i < g_message.length(); i++) {
-                if (g_message[i] == L'\n' || g_message[i] == L'\r') {
-                    g_message[i] = L' ';
-                }
+        if (g_inputMode) {
+            // Input required mode - different title and default message
+            g_title = L"Input Required";
+            if (g_userPrompt.empty()) {
+                g_message = L"Claude needs your input";
+            } else {
+                g_message = g_userPrompt;
             }
-            // Truncate with ellipsis if too long
-            const size_t maxLen = 35;
-            if (g_message.length() > maxLen) {
-                g_message = g_message.substr(0, maxLen) + L"...";
+        } else {
+            // Normal completion mode
+            g_title = L"Claude Code";
+            if (g_userPrompt.empty()) {
+                g_message = L"Task completed";
+            } else {
+                g_message = g_userPrompt;
             }
         }
-        g_title = L"Claude Code";
+
+        // Replace newlines with spaces for single-line display
+        for (size_t i = 0; i < g_message.length(); i++) {
+            if (g_message[i] == L'\n' || g_message[i] == L'\r') {
+                g_message[i] = L' ';
+            }
+        }
+        // Truncate with ellipsis if too long
+        const size_t maxLen = 35;
+        if (g_message.length() > maxLen) {
+            g_message = g_message.substr(0, maxLen) + L"...";
+        }
 
         // Set up asset paths
         wchar_t exePath[MAX_PATH];
@@ -1476,6 +1539,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     printf("Usage:\n");
     printf("  ToastWindow.exe --save      Save window state (UserPromptSubmit hook)\n");
     printf("  ToastWindow.exe --notify    Show notification (Stop hook)\n");
+    printf("  ToastWindow.exe --input     Show input-required notification (Notification hook)\n");
     printf("\n");
     printf("Both modes read session_id from stdin JSON for state file isolation.\n");
 
