@@ -1,0 +1,28 @@
+# Build outputs
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.obj
+
+# Publish output
+publish/
+*.deps.json
+*.runtimeconfig.json
+
+# User files
+*.user
+*.suo
+*.cache
+
+# Temp files
+*.tmp
+*.log
+build_aot.bat
+
+# VS files
+.vs/
