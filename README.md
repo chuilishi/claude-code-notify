@@ -52,6 +52,8 @@ irm https://raw.githubusercontent.com/chuilishi/claude-code-notify/main/scripts/
 2. `Stop` hook：Claude 完成任务时，显示通知
 3. 点击通知：使用保存的窗口句柄激活原窗口
 
+~~音效真的很好听~~
+
 ## 许可证
 
 MIT
