@@ -30,9 +30,6 @@ irm https://raw.githubusercontent.com/chuilishi/claude-code-notify/main/scripts/
 1. 下载 ToastWindow.exe 和资源文件到 `~/.claude/scripts/`
 2. 配置 `~/.claude/settings.json` 中的 hooks（会备份原有配置）
 
-
-将 `你的用户名` 替换为你的 Windows 用户名。
-
 ## 使用方法
 
 回答结束后，右下角弹出通知：
