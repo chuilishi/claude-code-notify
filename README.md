@@ -40,8 +40,8 @@ irm https://raw.githubusercontent.com/chuilishi/claude-code-notify/main/scripts/
 
 ## 卸载
 
-1. 删除 `~/.claude/scripts/ToastWindow.exe` 和 `assets` 文件夹
-2. 编辑 `~/.claude/settings.json`，删除 `hooks` 部分（或恢复 `settings.json.backup`）
+1. 删除 `~/.claude/notifications/` 文件夹
+2. 编辑 `~/.claude/settings.json`，删除 `hooks` 部分
 
 ## 工作原理
 
