@@ -1,56 +1,57 @@
 # Claude Code Notify
 
-原生 Windows Toast 通知，用于 Claude Code 任务完成提醒。点击通知可跳转回对应的 Claude Code 运行窗口（编辑器/终端）。
+[![中文](https://img.shields.io/badge/中文-点击查看-blue?style=for-the-badge)](README_CN.md)
 
-基于 Claude Code 的 hook 功能。
+Native Windows Toast notifications for Claude Code task completion. Click the notification to jump back to your Claude Code window (editor/terminal).
+
+Based on Claude Code's hook feature.
 
 ![Demo](assets/demo.gif)
 
-## 特性
+## Features
 
-- 原生 Windows Toast 通知
-- 点击通知自动激活并跳转回原窗口
-- 支持 Windows Terminal 标签页精确切换
-- 支持 VSCode、Cursor、JetBrains IDE 等编辑器
-- 自动提取调用应用图标
+- Native Windows Toast notifications
+- Click to activate and jump back to the original window
+- Supports Windows Terminal tab switching
+- Supports VSCode, Cursor, JetBrains IDEs, and more
+- Automatically extracts the calling application's icon
 
-## 系统要求
+## Requirements
 
 - Windows 10/11
+- PowerShell 5.1+
 
-## 一键安装
+## Installation
 
-打开 PowerShell，运行：
+Open PowerShell and run:
 
 ```powershell
 irm https://raw.githubusercontent.com/chuilishi/claude-code-notify/main/scripts/install.ps1 | iex
 ```
 
-安装脚本会自动：
-1. 下载 ToastWindow.exe 和资源文件到 `~/.claude/scripts/`
-2. 配置 `~/.claude/settings.json` 中的 hooks（会备份原有配置）
+The script will:
+1. Download ToastWindow.exe and assets to `~/.claude/notifications/`
+2. Configure hooks in `~/.claude/settings.json` (backs up existing config)
 
-## 使用方法
+## Usage
 
-回答结束后，右下角弹出通知：
-- **左键点击**：跳转回 Claude Code 所在窗口
-- **右键点击** 或 **点击 ×**：关闭通知
+After Claude finishes responding, a notification appears in the bottom-right corner:
+- **Left-click**: Jump back to the Claude Code window
+- **Right-click** or **click X**: Dismiss the notification
 
-支持几乎所有的终端和代码编辑器。
+Works with almost all terminals and code editors.
 
-## 卸载
+## Uninstall
 
-1. 删除 `~/.claude/notifications/` 文件夹
-2. 编辑 `~/.claude/settings.json`，删除 `hooks` 部分
+1. Delete the `~/.claude/notifications/` folder
+2. Edit `~/.claude/settings.json` and remove the `hooks` section
 
-## 工作原理
+## How It Works
 
-1. `UserPromptSubmit` hook：用户发送消息时，保存当前窗口状态
-2. `Stop` hook：Claude 完成任务时，显示通知
-3. 点击通知：使用保存的窗口句柄激活原窗口
+1. `UserPromptSubmit` hook: Saves the current window state when you send a message
+2. `Stop` hook: Shows a notification when Claude finishes
+3. Click notification: Activates the saved window handle
 
-~~音效真的很好听~~
-
-## 许可证
+## License
 
 MIT
