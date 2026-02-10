@@ -2,9 +2,9 @@
 
 # 🔔 Claude Code Notify
 
-[![中文](https://img.shields.io/badge/中文-点击查看-blue?style=for-the-badge)](README_CN.md)
-
 **Native Windows Toast notifications for Claude Code**
+
+**[📖 中文文档](README_CN.md)**
 
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
