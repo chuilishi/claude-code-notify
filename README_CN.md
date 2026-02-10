@@ -7,7 +7,6 @@
 **Claude Code 原生 Windows Toast 通知**
 
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white)
-![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE?logo=powershell&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 <img src="assets/demo.gif" width="450">
@@ -28,19 +27,14 @@
 
 ---
 
-## 🚀 一键安装
+## 🚀 安装
 
-```powershell
-irm https://raw.githubusercontent.com/chuilishi/claude-code-notify/main/scripts/install.ps1 | iex
+```bash
+claude plugin marketplace add chuilishi/claude-code-notify
+claude plugin install claude-code-notify@claude-code-notify
 ```
 
-<details>
-<summary>安装脚本做了什么？</summary>
-
-1. 下载 `ToastWindow.exe` 和资源文件到 `~/.claude/notifications/`
-2. 配置 `~/.claude/settings.json` 中的 hooks（会备份原有配置）
-
-</details>
+就这样。重启 Claude Code 即可自动生效。
 
 ---
 
@@ -57,8 +51,9 @@ Claude 回答结束后，右下角弹出通知：
 
 ## 🗑️ 卸载
 
-1. 删除 `~/.claude/notifications/` 文件夹
-2. 编辑 `~/.claude/settings.json`，删除 `hooks` 部分
+```bash
+claude plugin uninstall claude-code-notify
+```
 
 ---
 
@@ -67,10 +62,13 @@ Claude 回答结束后，右下角弹出通知：
 
 <br>
 
+本项目使用 Claude Code 的**插件系统**自动注册 hooks，无需手动编辑 `settings.json`。
+
 | Hook | 触发时机 | 动作 |
 |------|---------|------|
 | `UserPromptSubmit` | 发送消息时 | 保存当前窗口状态 |
-| `Stop` | Claude 完成时 | 显示通知 |
+| `Stop` | Claude 完成时 | 显示"任务完成"通知 |
+| `Notification` | Claude 需要输入时 | 显示"需要输入"通知 |
 | *点击通知* | — | 激活保存的窗口 |
 
 </details>

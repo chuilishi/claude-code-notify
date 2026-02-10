@@ -7,7 +7,6 @@
 **Native Windows Toast notifications for Claude Code**
 
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white)
-![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE?logo=powershell&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 <img src="assets/demo.gif" width="450">
@@ -30,17 +29,12 @@
 
 ## 🚀 Installation
 
-```powershell
-irm https://raw.githubusercontent.com/chuilishi/claude-code-notify/main/scripts/install.ps1 | iex
+```bash
+claude plugin marketplace add chuilishi/claude-code-notify
+claude plugin install claude-code-notify@claude-code-notify
 ```
 
-<details>
-<summary>What does the script do?</summary>
-
-1. Downloads `ToastWindow.exe` and assets to `~/.claude/notifications/`
-2. Configures hooks in `~/.claude/settings.json` (backs up existing config)
-
-</details>
+That's it. Restart Claude Code and notifications will work automatically.
 
 ---
 
@@ -57,8 +51,9 @@ After Claude finishes responding, a notification appears:
 
 ## 🗑️ Uninstall
 
-1. Delete `~/.claude/notifications/`
-2. Remove `hooks` section from `~/.claude/settings.json`
+```bash
+claude plugin uninstall claude-code-notify
+```
 
 ---
 
@@ -67,10 +62,13 @@ After Claude finishes responding, a notification appears:
 
 <br>
 
+This project uses Claude Code's **plugin system** to register hooks automatically — no manual `settings.json` editing required.
+
 | Hook | Trigger | Action |
 |------|---------|--------|
 | `UserPromptSubmit` | You send a message | Saves current window state |
-| `Stop` | Claude finishes | Shows notification |
+| `Stop` | Claude finishes | Shows "Task completed" notification |
+| `Notification` | Claude needs input | Shows "Input required" notification |
 | *Click notification* | — | Activates saved window |
 
 </details>

@@ -1,13 +1,15 @@
 # Build outputs
 bin/
 obj/
-*.exe
 *.dll
 *.pdb
 *.ilk
 *.exp
 *.lib
 *.obj
+
+# Allow bundled exe
+!notifications/ToastWindow.exe
 
 # Publish output
 publish/
