@@ -6,15 +6,13 @@ use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-fn encode_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
+const FR_PRIVATE: u32 = 0x10;
 
 /// Find the first file matching a pattern in a directory.
 /// e.g., find_first_file("C:\\dir", "*.wav")
 pub fn find_first_file(dir: &str, pattern: &str) -> Option<String> {
     let search = format!("{}\\{}", dir, pattern);
-    let search_wide = encode_wide(&search);
+    let search_wide = crate::util::encode_wide(&search);
 
     unsafe {
         let mut fd = WIN32_FIND_DATAW::default();
@@ -64,9 +62,9 @@ pub fn discover_assets() -> Assets {
 
 /// Load a custom font file as a private font. Returns the derived font family name.
 pub fn load_font(font_path: &str) -> Option<String> {
-    let path_wide = encode_wide(font_path);
+    let path_wide = crate::util::encode_wide(font_path);
     let result = unsafe {
-        AddFontResourceExW(PCWSTR(path_wide.as_ptr()), FONT_RESOURCE_CHARACTERISTICS(0x10), None)
+        AddFontResourceExW(PCWSTR(path_wide.as_ptr()), FONT_RESOURCE_CHARACTERISTICS(FR_PRIVATE), None)
     };
     if result > 0 {
         Some(derive_font_family(font_path))
@@ -77,9 +75,9 @@ pub fn load_font(font_path: &str) -> Option<String> {
 
 /// Remove a previously loaded private font.
 pub fn unload_font(font_path: &str) {
-    let path_wide = encode_wide(font_path);
+    let path_wide = crate::util::encode_wide(font_path);
     unsafe {
-        let _ = RemoveFontResourceExW(PCWSTR(path_wide.as_ptr()), 0x10, None);
+        let _ = RemoveFontResourceExW(PCWSTR(path_wide.as_ptr()), FR_PRIVATE, None);
     }
 }
 
@@ -126,7 +124,7 @@ pub fn extract_icon(exe_path: &str) -> HICON {
         return HICON::default();
     }
 
-    let path_wide = encode_wide(exe_path);
+    let path_wide = crate::util::encode_wide(exe_path);
     let mut large = HICON::default();
     let mut small = HICON::default();
 
@@ -154,18 +152,16 @@ pub fn play_sound(wav_path: &Option<String>) {
     use windows::Win32::Media::Audio::*;
 
     if let Some(path) = wav_path {
-        let path_wide = encode_wide(path);
-        // Check file exists
-        let attrs = unsafe { GetFileAttributesW(PCWSTR(path_wide.as_ptr())) };
-        if attrs != INVALID_FILE_ATTRIBUTES {
-            unsafe {
-                let _ = PlaySoundW(
-                    PCWSTR(path_wide.as_ptr()),
-                    None,
-                    SND_FILENAME | SND_ASYNC,
-                );
+        let path_wide = crate::util::encode_wide(path);
+        unsafe {
+            let result = PlaySoundW(
+                PCWSTR(path_wide.as_ptr()),
+                None,
+                SND_FILENAME | SND_ASYNC,
+            );
+            if result.as_bool() {
+                return;
             }
-            return;
         }
     }
 

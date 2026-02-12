@@ -4,7 +4,7 @@
 //! Format: 4 lines (HWND, RuntimeId, caller exe path, user prompt)
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, IsWindow};
+use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
 /// Data stored in and loaded from the state file.
 pub struct State {
@@ -36,7 +36,7 @@ pub fn state_file_path(session_id: &str) -> std::path::PathBuf {
 /// Save state to the state file (4 lines).
 pub fn save_state(session_id: &str, hwnd: HWND, runtime_id: &str, icon_path: &str, prompt: &str) {
     let path = state_file_path(session_id);
-    let hwnd_val = hwnd.0 as isize;
+    let hwnd_val = hwnd.0 as usize;
     let content = format!("{}\n{}\n{}\n{}", hwnd_val, runtime_id, icon_path, prompt);
     let _ = std::fs::write(&path, content);
 }
@@ -55,12 +55,12 @@ pub fn load_state(session_id: &str) -> State {
 
     // Line 1: HWND
     if let Some(line) = lines.first() {
-        if let Ok(val) = line.trim().parse::<i64>() {
+        if let Ok(val) = line.trim().parse::<usize>() {
             let hwnd = HWND(val as *mut _);
             if unsafe { IsWindow(Some(hwnd)).as_bool() } {
                 state.target_hwnd = hwnd;
                 // Check if this is Windows Terminal
-                let class = get_class_name(hwnd);
+                let class = crate::util::get_class_name(hwnd);
                 if class == "CASCADIA_HOSTING_WINDOW_CLASS" {
                     state.wt_hwnd = hwnd;
                 }
@@ -97,10 +97,4 @@ pub fn load_state(session_id: &str) -> State {
 pub fn delete_state(session_id: &str) {
     let path = state_file_path(session_id);
     let _ = std::fs::remove_file(&path);
-}
-
-fn get_class_name(hwnd: HWND) -> String {
-    let mut buf = [0u16; 256];
-    let len = unsafe { GetClassNameW(hwnd, &mut buf) };
-    String::from_utf16_lossy(&buf[..len as usize])
 }

@@ -10,6 +10,7 @@ mod spawn;
 mod state;
 mod toast;
 mod uiautomation;
+mod util;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::*;
@@ -26,12 +27,6 @@ fn print_usage() {
          ToastWindow.exe --input     Show input-required notification (Notification hook)\n\n\
          Both modes read session_id from stdin JSON for state file isolation."
     );
-}
-
-fn get_class_name(hwnd: HWND) -> String {
-    let mut buf = [0u16; 256];
-    let len = unsafe { GetClassNameW(hwnd, &mut buf) };
-    String::from_utf16_lossy(&buf[..len as usize])
 }
 
 fn exe_path() -> String {
@@ -69,7 +64,7 @@ fn run_save_mode(immediate_hwnd: HWND) -> i32 {
 
     // Detect Windows Terminal and get RuntimeId
     let mut runtime_id = String::new();
-    let class = get_class_name(hwnd);
+    let class = util::get_class_name(hwnd);
     debug_log!("Window class: {}", class);
 
     if class == "CASCADIA_HOSTING_WINDOW_CLASS" {
@@ -248,7 +243,10 @@ fn main() {
     let immediate_hwnd = unsafe { GetForegroundWindow() };
 
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if hr.is_err() {
+            debug_log!("CoInitializeEx failed: {:?}", hr);
+        }
     }
 
     let args = cli::parse_args();

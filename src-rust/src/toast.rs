@@ -3,6 +3,8 @@
 //! Implements the full toast notification window with GDI drawing,
 //! fade-out animation, Telegram-style stacking, and click-to-activate.
 
+use std::cell::RefCell;
+
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -41,6 +43,7 @@ const TOAST_CLASS_NAME: &str = "ClaudeCodeToast";
 
 const WM_TOAST_CHECK_POSITION: u32 = WM_USER + 101;
 const WM_TOAST_PAUSE_TIMER: u32 = WM_USER + 102;
+const WM_MOUSELEAVE: u32 = 0x02A3;
 
 // --- Global state for the toast window (per-process, one toast per process) ---
 
@@ -65,28 +68,33 @@ struct ToastState {
     // Stacking state
     target_y: i32,
     is_bottom_toast: bool,
-    work_area: RECT,
     taskbar_edge: u32,
     // Clicked flag
     clicked: bool,
 }
 
-static mut TOAST: Option<ToastState> = None;
-
-fn toast() -> &'static ToastState {
-    unsafe { TOAST.as_ref().unwrap() }
+thread_local! {
+    static TOAST: RefCell<Option<ToastState>> = const { RefCell::new(None) };
 }
 
-fn toast_mut() -> &'static mut ToastState {
-    unsafe { TOAST.as_mut().unwrap() }
+/// Execute a closure with an immutable reference to the toast state.
+fn with_toast<R>(f: impl FnOnce(&ToastState) -> R) -> R {
+    TOAST.with(|cell| {
+        let borrow = cell.borrow();
+        f(borrow.as_ref().unwrap())
+    })
 }
 
-fn encode_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
+/// Execute a closure with a mutable reference to the toast state.
+fn with_toast_mut<R>(f: impl FnOnce(&mut ToastState) -> R) -> R {
+    TOAST.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        f(borrow.as_mut().unwrap())
+    })
 }
 
 fn make_font(height: i32, bold: bool, family: &str) -> HFONT {
-    let face = encode_wide(family);
+    let face = crate::util::encode_wide(family);
     unsafe {
         CreateFontW(
             height, 0, 0, 0,
@@ -118,11 +126,12 @@ struct ToastInfo {
 
 fn enum_other_toasts() -> Vec<ToastInfo> {
     let mut toasts: Vec<ToastInfo> = Vec::new();
-    let class_wide = encode_wide(TOAST_CLASS_NAME);
 
     unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let toasts = &mut *(lparam.0 as *mut Vec<ToastInfo>);
-        let my_hwnd = if let Some(t) = TOAST.as_ref() { t.hwnd } else { HWND::default() };
+        let my_hwnd = TOAST.with(|cell| {
+            cell.borrow().as_ref().map(|t| t.hwnd).unwrap_or_default()
+        });
         if hwnd == my_hwnd {
             return TRUE;
         }
@@ -136,9 +145,6 @@ fn enum_other_toasts() -> Vec<ToastInfo> {
         }
         TRUE
     }
-
-    // Suppress unused variable warning for class_wide (kept for clarity)
-    let _ = &class_wide;
 
     unsafe {
         let _ = EnumWindows(
@@ -183,7 +189,7 @@ fn calculate_position(work_area: &RECT, taskbar_edge: u32) -> (i32, i32) {
     (x, y)
 }
 
-fn is_bottom_toast_check(hwnd: HWND, taskbar_edge: u32) -> bool {
+fn is_bottom_toast_check(hwnd: HWND, _taskbar_edge: u32) -> bool {
     let other_toasts = enum_other_toasts();
     if other_toasts.is_empty() {
         return true;
@@ -195,8 +201,6 @@ fn is_bottom_toast_check(hwnd: HWND, taskbar_edge: u32) -> bool {
             return false;
         }
     }
-    // Also check HWND ordering for the taskbar position concept
-    let _ = taskbar_edge;
     true
 }
 
@@ -218,7 +222,7 @@ fn notify_other_toasts_closing(my_hwnd: HWND) {
 }
 
 fn notify_all_toasts_pause_timer(pause: bool) {
-    let my_hwnd = toast().hwnd;
+    let my_hwnd = with_toast(|t| t.hwnd);
     // Send to self
     unsafe {
         let _ = SendMessageW(
@@ -243,59 +247,48 @@ fn notify_all_toasts_pause_timer(pause: bool) {
 }
 
 fn animate_to_position(hwnd: HWND) {
-    let state = toast_mut();
     let mut rect = RECT::default();
     unsafe { let _ = GetWindowRect(hwnd, &mut rect); }
 
-    let current_y = rect.top;
-    let diff = state.target_y - current_y;
+    let (target_y, done) = with_toast_mut(|state| {
+        let current_y = rect.top;
+        let diff = state.target_y - current_y;
 
-    if diff == 0 {
+        if diff == 0 {
+            return (0, true);
+        }
+
+        let mut step = diff * 2 / 5;
+        if step == 0 {
+            step = if diff > 0 { 2 } else { -2 };
+        }
+
+        let mut new_y = current_y + step;
+        if (state.target_y - new_y).abs() < 4 {
+            new_y = state.target_y;
+        }
+
+        (new_y, new_y == state.target_y)
+    });
+
+    if done && target_y == 0 {
+        // diff was 0, just kill timer
         unsafe { let _ = KillTimer(Some(hwnd), TIMER_REPOSITION); }
         return;
-    }
-
-    let mut step = diff * 2 / 5;
-    if step == 0 {
-        step = if diff > 0 { 2 } else { -2 };
-    }
-
-    let mut new_y = current_y + step;
-    if (state.target_y - new_y).abs() < 4 {
-        new_y = state.target_y;
     }
 
     unsafe {
         let _ = SetWindowPos(
             hwnd,
             None,
-            rect.left, new_y, 0, 0,
+            rect.left, target_y, 0, 0,
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
 
-    if new_y == state.target_y {
+    if done {
         unsafe { let _ = KillTimer(Some(hwnd), TIMER_REPOSITION); }
     }
-}
-
-fn recalculate_position(hwnd: HWND) {
-    let state = toast();
-    let others = enum_other_toasts();
-
-    // Count toasts with lower HWND value (created earlier = closer to taskbar)
-    let count = others.iter()
-        .filter(|t| (t.hwnd.0 as usize) < (hwnd.0 as usize))
-        .count() as i32;
-
-    let target_y = if state.taskbar_edge == ABE_TOP as u32 {
-        state.work_area.top + count * WINDOW_HEIGHT
-    } else {
-        state.work_area.bottom - WINDOW_HEIGHT - count * WINDOW_HEIGHT
-    };
-
-    let state = toast_mut();
-    state.target_y = target_y;
 }
 
 // --- WndProc ---
@@ -316,17 +309,21 @@ unsafe extern "system" fn wnd_proc(
             match wparam.0 {
                 TIMER_START_FADE => {
                     let _ = KillTimer(Some(hwnd), TIMER_START_FADE);
-                    let state = toast_mut();
-                    state.is_fading = true;
+                    with_toast_mut(|state| state.is_fading = true);
                     SetTimer(Some(hwnd), TIMER_FADE, 16, None);
                 }
                 TIMER_FADE => {
-                    let state = toast_mut();
-                    if state.alpha > state.fade_step {
-                        state.alpha -= state.fade_step;
-                        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), state.alpha, LWA_ALPHA);
-                    } else {
-                        state.is_fading = false;
+                    let should_destroy = with_toast_mut(|state| {
+                        if state.alpha > state.fade_step {
+                            state.alpha -= state.fade_step;
+                            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), state.alpha, LWA_ALPHA);
+                            false
+                        } else {
+                            state.is_fading = false;
+                            true
+                        }
+                    });
+                    if should_destroy {
                         let _ = KillTimer(Some(hwnd), TIMER_FADE);
                         notify_other_toasts_closing(hwnd);
                         let _ = DestroyWindow(hwnd);
@@ -336,9 +333,11 @@ unsafe extern "system" fn wnd_proc(
                     animate_to_position(hwnd);
                 }
                 TIMER_CHECK_BOTTOM => {
-                    let state = toast_mut();
-                    if is_bottom_toast_check(hwnd, state.taskbar_edge) {
-                        state.is_bottom_toast = true;
+                    let taskbar_edge = with_toast(|s| s.taskbar_edge);
+                    if is_bottom_toast_check(hwnd, taskbar_edge) {
+                        with_toast_mut(|state| {
+                            state.is_bottom_toast = true;
+                        });
                         let _ = KillTimer(Some(hwnd), TIMER_CHECK_BOTTOM);
                         SetTimer(Some(hwnd), TIMER_START_FADE, DISPLAY_MS, None);
                     }
@@ -360,16 +359,15 @@ unsafe extern "system" fn wnd_proc(
                 let _ = DestroyWindow(hwnd);
             } else {
                 // Body click: activate window
-                let state = toast_mut();
-                state.clicked = true;
                 let _ = KillTimer(Some(hwnd), TIMER_START_FADE);
                 let _ = KillTimer(Some(hwnd), TIMER_FADE);
                 notify_other_toasts_closing(hwnd);
                 let _ = ShowWindow(hwnd, SW_HIDE);
 
-                let target = state.target_hwnd;
-                let wt = state.wt_hwnd;
-                let rid = state.wt_runtime_id.clone();
+                let (target, wt, rid) = with_toast_mut(|state| {
+                    state.clicked = true;
+                    (state.target_hwnd, state.wt_hwnd, state.wt_runtime_id.clone())
+                });
                 crate::activate::activate_window(target, wt, &rid);
 
                 let _ = DestroyWindow(hwnd);
@@ -387,9 +385,9 @@ unsafe extern "system" fn wnd_proc(
         }
 
         WM_MOUSEMOVE => {
-            let state = toast_mut();
-            if !state.mouse_inside {
-                state.mouse_inside = true;
+            let was_inside = with_toast(|s| s.mouse_inside);
+            if !was_inside {
+                with_toast_mut(|state| state.mouse_inside = true);
                 // Track mouse leave
                 let mut tme = TRACKMOUSEEVENT {
                     cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
@@ -405,10 +403,8 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
 
-        // WM_MOUSELEAVE = 675 (from Win32_UI_Controls)
-        675 => {
-            let state = toast_mut();
-            state.mouse_inside = false;
+        WM_MOUSELEAVE => {
+            with_toast_mut(|state| state.mouse_inside = false);
             // Resume all toasts
             notify_all_toasts_pause_timer(false);
             LRESULT(0)
@@ -419,51 +415,53 @@ unsafe extern "system" fn wnd_proc(
             let mut my_rect = RECT::default();
             let _ = GetWindowRect(hwnd, &mut my_rect);
 
-            let state = toast_mut();
-            if state.taskbar_edge == ABE_TOP as u32 {
-                // Top taskbar: if we're below the closed toast, move up
-                if my_rect.top > closed_toast_y {
-                    state.target_y = my_rect.top - WINDOW_HEIGHT;
-                    SetTimer(Some(hwnd), TIMER_REPOSITION, 16, None);
+            with_toast_mut(|state| {
+                if state.taskbar_edge == ABE_TOP as u32 {
+                    // Top taskbar: if we're below the closed toast, move up
+                    if my_rect.top > closed_toast_y {
+                        state.target_y = my_rect.top - WINDOW_HEIGHT;
+                        SetTimer(Some(hwnd), TIMER_REPOSITION, 16, None);
+                    }
+                } else {
+                    // Bottom taskbar: if we're above the closed toast, move down
+                    if my_rect.top < closed_toast_y {
+                        state.target_y = my_rect.top + WINDOW_HEIGHT;
+                        SetTimer(Some(hwnd), TIMER_REPOSITION, 16, None);
+                    }
                 }
-            } else {
-                // Bottom taskbar: if we're above the closed toast, move down
-                if my_rect.top < closed_toast_y {
-                    state.target_y = my_rect.top + WINDOW_HEIGHT;
-                    SetTimer(Some(hwnd), TIMER_REPOSITION, 16, None);
-                }
-            }
 
-            // Check if we became the bottom toast
-            if is_bottom_toast_check(hwnd, state.taskbar_edge) && !state.is_bottom_toast {
-                state.is_bottom_toast = true;
-                let _ = KillTimer(Some(hwnd), TIMER_CHECK_BOTTOM);
-                if !state.mouse_inside {
-                    SetTimer(Some(hwnd), TIMER_START_FADE, DISPLAY_MS, None);
+                // Check if we became the bottom toast
+                if is_bottom_toast_check(hwnd, state.taskbar_edge) && !state.is_bottom_toast {
+                    state.is_bottom_toast = true;
+                    let _ = KillTimer(Some(hwnd), TIMER_CHECK_BOTTOM);
+                    if !state.mouse_inside {
+                        SetTimer(Some(hwnd), TIMER_START_FADE, DISPLAY_MS, None);
+                    }
                 }
-            }
+            });
 
             LRESULT(0)
         }
 
         x if x == WM_TOAST_PAUSE_TIMER => {
             let pause = wparam.0 == 1;
-            let state = toast_mut();
 
-            if pause {
-                if state.is_fading {
-                    let _ = KillTimer(Some(hwnd), TIMER_FADE);
-                    state.is_fading = false;
-                    state.alpha = INITIAL_ALPHA;
-                    let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), INITIAL_ALPHA, LWA_ALPHA);
+            with_toast_mut(|state| {
+                if pause {
+                    if state.is_fading {
+                        let _ = KillTimer(Some(hwnd), TIMER_FADE);
+                        state.is_fading = false;
+                        state.alpha = INITIAL_ALPHA;
+                        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), INITIAL_ALPHA, LWA_ALPHA);
+                    }
+                    let _ = KillTimer(Some(hwnd), TIMER_START_FADE);
+                } else {
+                    // Resume: only start fade timer if bottom toast and mouse not inside
+                    if state.is_bottom_toast && !state.mouse_inside {
+                        SetTimer(Some(hwnd), TIMER_START_FADE, DISPLAY_MS, None);
+                    }
                 }
-                let _ = KillTimer(Some(hwnd), TIMER_START_FADE);
-            } else {
-                // Resume: only start fade timer if bottom toast and mouse not inside
-                if state.is_bottom_toast && !state.mouse_inside {
-                    SetTimer(Some(hwnd), TIMER_START_FADE, DISPLAY_MS, None);
-                }
-            }
+            });
             LRESULT(0)
         }
 
@@ -479,7 +477,17 @@ unsafe extern "system" fn wnd_proc(
 // --- Paint ---
 
 unsafe fn paint(hwnd: HWND) {
-    let state = toast();
+    let (title, message, input_mode, font_family, icon, default_icon_path) = with_toast(|state| {
+        (
+            state.title.clone(),
+            state.message.clone(),
+            state.input_mode,
+            state.font_family.clone(),
+            state.icon,
+            state.default_icon_path.clone(),
+        )
+    });
+
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
 
@@ -487,10 +495,10 @@ unsafe fn paint(hwnd: HWND) {
     let bg = CreateSolidBrush(COLORREF(COLOR_BG));
     let rect = RECT { left: 0, top: 0, right: WINDOW_WIDTH, bottom: WINDOW_HEIGHT };
     FillRect(hdc, &rect, bg);
-    DeleteObject(HGDIOBJ(bg.0));
+    let _ = DeleteObject(HGDIOBJ(bg.0));
 
     // Border (color depends on input mode)
-    let border_color = if state.input_mode { COLOR_BORDER_INPUT } else { COLOR_BORDER_NORMAL };
+    let border_color = if input_mode { COLOR_BORDER_INPUT } else { COLOR_BORDER_NORMAL };
     let border = CreateSolidBrush(COLORREF(border_color));
     let borders = [
         RECT { left: 0, top: 0, right: WINDOW_WIDTH, bottom: BORDER_WIDTH },
@@ -501,30 +509,33 @@ unsafe fn paint(hwnd: HWND) {
     for b in &borders {
         FillRect(hdc, b, border);
     }
-    DeleteObject(HGDIOBJ(border.0));
+    let _ = DeleteObject(HGDIOBJ(border.0));
 
     // Icon
     let icon_x = ICON_PADDING;
     let icon_y = (WINDOW_HEIGHT - ICON_SIZE) / 2;
-    if !state.icon.is_invalid() {
-        DrawIconEx(
+    if !icon.is_invalid() {
+        let _ = DrawIconEx(
             hdc, icon_x, icon_y,
-            state.icon,
+            icon,
             ICON_SIZE, ICON_SIZE,
             0, None, DI_NORMAL,
         );
-    } else if !state.default_icon_path.is_empty() {
-        let path_wide = encode_wide(&state.default_icon_path);
-        let h_icon: HICON = std::mem::transmute(LoadImageW(
+    } else if !default_icon_path.is_empty() {
+        let path_wide = crate::util::encode_wide(&default_icon_path);
+        let result = LoadImageW(
             None,
             PCWSTR(path_wide.as_ptr()),
             IMAGE_ICON,
             ICON_SIZE, ICON_SIZE,
             LR_LOADFROMFILE,
-        ).unwrap_or_default());
-        if !h_icon.is_invalid() {
-            DrawIconEx(hdc, icon_x, icon_y, h_icon, ICON_SIZE, ICON_SIZE, 0, None, DI_NORMAL);
-            DestroyIcon(h_icon);
+        );
+        if let Ok(handle) = result {
+            let h_icon = HICON(handle.0);
+            if !h_icon.is_invalid() {
+                let _ = DrawIconEx(hdc, icon_x, icon_y, h_icon, ICON_SIZE, ICON_SIZE, 0, None, DI_NORMAL);
+                let _ = DestroyIcon(h_icon);
+            }
         }
     }
 
@@ -535,23 +546,25 @@ unsafe fn paint(hwnd: HWND) {
 
     // Title
     SetTextColor(hdc, COLORREF(COLOR_TITLE));
-    let title_font = make_font(18, true, &state.font_family);
+    let title_font = make_font(18, true, &font_family);
     let old = SelectObject(hdc, HGDIOBJ(title_font.0));
     let mut title_rect = RECT { left: text_left, top: 15, right: WINDOW_WIDTH - 10, bottom: 40 };
-    let mut title_buf = encode_wide(&state.title);
-    DrawTextW(hdc, &mut title_buf, &mut title_rect, DRAW_TEXT_FORMAT(0));
+    let mut title_buf = crate::util::encode_wide(&title);
+    let title_len = title_buf.len() - 1; // exclude null terminator
+    DrawTextW(hdc, &mut title_buf[..title_len], &mut title_rect, DRAW_TEXT_FORMAT(0));
     SelectObject(hdc, old);
-    DeleteObject(HGDIOBJ(title_font.0));
+    let _ = DeleteObject(HGDIOBJ(title_font.0));
 
     // Message
     SetTextColor(hdc, COLORREF(COLOR_MESSAGE));
-    let msg_font = make_font(14, false, &state.font_family);
+    let msg_font = make_font(14, false, &font_family);
     let old = SelectObject(hdc, HGDIOBJ(msg_font.0));
     let mut msg_rect = RECT { left: text_left, top: 42, right: WINDOW_WIDTH - 10, bottom: WINDOW_HEIGHT - 10 };
-    let mut msg_buf = encode_wide(&state.message);
-    DrawTextW(hdc, &mut msg_buf, &mut msg_rect, DRAW_TEXT_FORMAT(0));
+    let mut msg_buf = crate::util::encode_wide(&message);
+    let msg_len = msg_buf.len() - 1; // exclude null terminator
+    DrawTextW(hdc, &mut msg_buf[..msg_len], &mut msg_rect, DRAW_TEXT_FORMAT(0));
     SelectObject(hdc, old);
-    DeleteObject(HGDIOBJ(msg_font.0));
+    let _ = DeleteObject(HGDIOBJ(msg_font.0));
 
     // Close button (always Segoe UI)
     SetTextColor(hdc, COLORREF(COLOR_CLOSE));
@@ -564,17 +577,18 @@ unsafe fn paint(hwnd: HWND) {
         right: btn_left + CLOSE_BUTTON_SIZE,
         bottom: CLOSE_BUTTON_MARGIN + CLOSE_BUTTON_SIZE,
     };
-    let mut close_buf = encode_wide("\u{00D7}");
+    let mut close_buf = crate::util::encode_wide("\u{00D7}");
+    let close_len = close_buf.len() - 1;
     DrawTextW(
         hdc,
-        &mut close_buf,
+        &mut close_buf[..close_len],
         &mut close_rect,
         DT_CENTER | DT_VCENTER | DT_SINGLELINE,
     );
     SelectObject(hdc, old);
-    DeleteObject(HGDIOBJ(close_font.0));
+    let _ = DeleteObject(HGDIOBJ(close_font.0));
 
-    EndPaint(hwnd, &ps);
+    let _ = EndPaint(hwnd, &ps);
 }
 
 // --- Public API ---
@@ -603,8 +617,8 @@ pub fn show_toast(params: ToastParams) {
     // Get work area from cursor's monitor
     let (work_area, _monitor) = get_cursor_monitor_work_area();
 
-    unsafe {
-        TOAST = Some(ToastState {
+    TOAST.with(|cell| {
+        *cell.borrow_mut() = Some(ToastState {
             hwnd: HWND::default(),
             title: params.title,
             message: params.message,
@@ -621,15 +635,14 @@ pub fn show_toast(params: ToastParams) {
             mouse_inside: false,
             target_y: 0,
             is_bottom_toast: false,
-            work_area,
             taskbar_edge,
             clicked: false,
         });
-    }
+    });
 
     unsafe {
         let instance = GetModuleHandleW(None).unwrap_or_default();
-        let class_wide = encode_wide(TOAST_CLASS_NAME);
+        let class_wide = crate::util::encode_wide(TOAST_CLASS_NAME);
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -659,21 +672,20 @@ pub fn show_toast(params: ToastParams) {
             return;
         }
 
-        let state = toast_mut();
-        state.hwnd = hwnd;
+        with_toast_mut(|state| state.hwnd = hwnd);
 
         let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), INITIAL_ALPHA, LWA_ALPHA);
 
         // Determine if bottom toast and start appropriate timer
         if is_bottom_toast_check(hwnd, taskbar_edge) {
-            state.is_bottom_toast = true;
+            with_toast_mut(|state| state.is_bottom_toast = true);
             SetTimer(Some(hwnd), TIMER_START_FADE, DISPLAY_MS, None);
         } else {
-            state.is_bottom_toast = false;
+            with_toast_mut(|state| state.is_bottom_toast = false);
             SetTimer(Some(hwnd), TIMER_CHECK_BOTTOM, 200, None);
         }
 
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         let _ = UpdateWindow(hwnd);
 
         // Message loop
@@ -682,10 +694,6 @@ pub fn show_toast(params: ToastParams) {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-
-        // Cleanup
-        let class_wide2 = encode_wide(TOAST_CLASS_NAME);
-        let _ = UnregisterClassW(PCWSTR(class_wide2.as_ptr()), Some(instance.into()));
     }
 }
 
