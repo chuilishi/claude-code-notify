@@ -415,6 +415,9 @@ unsafe extern "system" fn wnd_proc(
             let mut my_rect = RECT::default();
             let _ = GetWindowRect(hwnd, &mut my_rect);
 
+            let taskbar_edge = with_toast(|s| s.taskbar_edge);
+
+            // Update position target (borrow released before is_bottom_toast_check)
             with_toast_mut(|state| {
                 if state.taskbar_edge == ABE_TOP as u32 {
                     // Top taskbar: if we're below the closed toast, move up
@@ -429,16 +432,20 @@ unsafe extern "system" fn wnd_proc(
                         SetTimer(Some(hwnd), TIMER_REPOSITION, 16, None);
                     }
                 }
+            });
 
-                // Check if we became the bottom toast
-                if is_bottom_toast_check(hwnd, state.taskbar_edge) && !state.is_bottom_toast {
+            // Check bottom toast status OUTSIDE the borrow to avoid double-borrow
+            // (is_bottom_toast_check -> enum_other_toasts -> callback borrows TOAST)
+            let is_already_bottom = with_toast(|s| s.is_bottom_toast);
+            if !is_already_bottom && is_bottom_toast_check(hwnd, taskbar_edge) {
+                with_toast_mut(|state| {
                     state.is_bottom_toast = true;
                     let _ = KillTimer(Some(hwnd), TIMER_CHECK_BOTTOM);
                     if !state.mouse_inside {
                         SetTimer(Some(hwnd), TIMER_START_FADE, DISPLAY_MS, None);
                     }
-                }
-            });
+                });
+            }
 
             LRESULT(0)
         }
