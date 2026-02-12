@@ -85,6 +85,7 @@ static BYTE g_alpha = 230;
 static bool g_debug = false;
 static bool g_clicked = false;
 static bool g_inputMode = false;  // True for input-required notifications (yellow theme)
+static std::wstring g_notifyMessage;  // Message from Notification hook stdin (--message arg)
 static HWND g_immediateHwnd = NULL;  // Captured at program start before any delay
 
 // Window handles
@@ -1342,6 +1343,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     bool notifyMode = false;
     bool inputMode = false;       // Notification hook (input required)
     bool notifyShowMode = false;  // Internal: actually show the toast
+    bool cleanupMode = false;     // SessionEnd hook: delete state file
 
     for (int i = 1; i < argc; i++) {
         std::wstring arg = argv[i];
@@ -1352,6 +1354,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             notifyMode = true;
         } else if (arg == L"--input") {
             inputMode = true;
+        } else if (arg == L"--cleanup") {
+            cleanupMode = true;
         } else if (arg == L"--notify-show") {
             notifyShowMode = true;  // Internal flag for spawned process
         } else if (arg == L"--input-mode") {
@@ -1372,6 +1376,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             }
         } else if (arg == L"--session" && i + 1 < argc) {
             g_sessionId = argv[++i];
+        } else if (arg == L"--message" && i + 1 < argc) {
+            g_notifyMessage = argv[++i];
         }
     }
 
@@ -1379,6 +1385,21 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     if (saveMode) {
         SaveState();
+        CoUninitialize();
+        return 0;
+    }
+
+    if (cleanupMode) {
+        // SessionEnd hook: delete state file for this session
+        std::string jsonInput = ReadStdinJson();
+        g_sessionId = ExtractJsonStringValue(jsonInput, "session_id");
+
+        if (!g_sessionId.empty()) {
+            std::wstring stateFile = GetStateFilePath(g_sessionId);
+            DeleteFileW(stateFile.c_str());
+            Log(L"[DEBUG] Cleanup: deleted state file for session %ls", g_sessionId.c_str());
+        }
+
         CoUninitialize();
         return 0;
     }
@@ -1427,9 +1448,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
 
     if (inputMode) {
-        // Read JSON from stdin to get session_id (same as notifyMode but with input style)
+        // Read JSON from stdin to get session_id and message
         std::string jsonInput = ReadStdinJson();
         g_sessionId = ExtractJsonStringValue(jsonInput, "session_id");
+        std::wstring message = ExtractJsonStringValue(jsonInput, "message");
 
         if (g_sessionId.empty()) {
             Log(L"[DEBUG] No session_id in stdin JSON, cannot show notification");
@@ -1438,8 +1460,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
 
         Log(L"[DEBUG] Input mode, session_id: %ls", g_sessionId.c_str());
+        Log(L"[DEBUG] Notification message: %ls", message.c_str());
 
-        // Build command line for child process - pass session ID and input-mode flag
+        // Build command line for child process - pass session ID, input-mode flag, and message
         wchar_t exePath[MAX_PATH];
         GetModuleFileNameW(NULL, exePath, MAX_PATH);
 
@@ -1448,6 +1471,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         cmdLine += L"\" --notify-show --input-mode --session \"";
         cmdLine += g_sessionId;
         cmdLine += L"\"";
+        if (!message.empty()) {
+            // Escape quotes in message for command line
+            std::wstring escaped = message;
+            for (size_t i = 0; i < escaped.length(); i++) {
+                if (escaped[i] == L'"') { escaped.replace(i, 1, L"\\\""); i++; }
+            }
+            cmdLine += L" --message \"";
+            cmdLine += escaped;
+            cmdLine += L"\"";
+        }
         if (g_debug) {
             cmdLine += L" --debug";
         }
@@ -1480,17 +1513,17 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         // Load all state from file
         LoadState(g_sessionId);
 
-        // Use user prompt as message (truncated if needed)
+        // Determine notification content
         if (g_inputMode) {
-            // Input required mode - different title and default message
+            // Input required mode - use message from Notification hook stdin
             g_title = L"Input Required";
-            if (g_userPrompt.empty()) {
-                g_message = L"Claude needs your input";
+            if (!g_notifyMessage.empty()) {
+                g_message = g_notifyMessage;
             } else {
-                g_message = g_userPrompt;
+                g_message = L"Claude needs your input";
             }
         } else {
-            // Normal completion mode
+            // Normal completion mode - use saved user prompt
             g_title = L"Claude Code";
             if (g_userPrompt.empty()) {
                 g_message = L"Task completed";
@@ -1527,9 +1560,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
         ShowToast();
 
-        // Delete state file after use (cleanup)
-        std::wstring stateFile = GetStateFilePath(g_sessionId);
-        DeleteFileW(stateFile.c_str());
+        // State file is NOT deleted here - it persists for the session lifetime.
+        // Same session may trigger multiple Stop events (e.g. stop hook block/continue),
+        // and the HWND/tab/prompt remain valid. File is overwritten by next --save
+        // and cleaned up by SessionEnd hook.
 
         CoUninitialize();
         return 0;

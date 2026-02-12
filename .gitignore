@@ -1,33 +1,17 @@
 # Build outputs
-bin/
-obj/
-*.dll
-*.pdb
-*.ilk
-*.exp
-*.lib
 *.obj
+*.pdb
+*.log
 
 # Allow bundled exe
 !notifications/ToastWindow.exe
 
-# Publish output
-publish/
-*.deps.json
-*.runtimeconfig.json
+# Rust build output
+src-rust/target/
 
-# User files
-*.user
-*.suo
-*.cache
+# Local settings
+.claude/
 
 # Temp files
 *.tmp
-*.log
-build_aot.bat
-
-# Zip
 *.zip
-
-# VS files
-.vs/
