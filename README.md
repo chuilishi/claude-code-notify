@@ -72,7 +72,9 @@ This project uses Claude Code's **plugin system** to register hooks automaticall
 |------|---------|--------|
 | `UserPromptSubmit` | You send a message | Saves current window handle, active tab, and caller app icon |
 | `Stop` | Claude finishes | Shows "Task completed" notification (orange border) |
-| `Notification` | Claude needs input | Shows "Input required" notification (yellow border) |
+| `Notification` | Claude needs input (permission / idle / MCP elicitation) | Shows context-aware notification (yellow border) with title like "Permission Required", "Claude is Waiting", "MCP Asks" |
+| `PreToolUse` (`AskUserQuestion` \| `ExitPlanMode`) | Claude asks a question or finishes a plan | Shows "Claude is Asking" / "Plan Ready for Approval" notification |
+| `SessionEnd` | Session ends | Cleans up the session's state file |
 | *Click notification* | — | Activates saved window and switches to the correct tab |
 
 ### Session Isolation

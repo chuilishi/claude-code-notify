@@ -1,7 +1,7 @@
 //! CLI argument parsing for ToastWindow.
 //!
 //! Modes: --save, --notify, --input, --notify-show, --cleanup
-//! Flags: --debug/-d, --input-mode, --session <val>, --message <val>
+//! Flags: --debug/-d, --input-mode, --session <val>, --message <val>, --title <val>
 
 #[derive(Debug, PartialEq)]
 pub enum Mode {
@@ -20,6 +20,7 @@ pub struct Args {
     pub input_mode: bool,
     pub session: String,
     pub message: String,
+    pub title: String,
 }
 
 pub fn parse_args() -> Args {
@@ -30,6 +31,7 @@ pub fn parse_args() -> Args {
         input_mode: false,
         session: String::new(),
         message: String::new(),
+        title: String::new(),
     };
 
     let mut i = 1;
@@ -52,6 +54,12 @@ pub fn parse_args() -> Args {
                 i += 1;
                 if i < args.len() {
                     result.message = args[i].clone();
+                }
+            }
+            "--title" => {
+                i += 1;
+                if i < args.len() {
+                    result.title = args[i].clone();
                 }
             }
             _ => {}

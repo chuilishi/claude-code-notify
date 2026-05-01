@@ -23,9 +23,10 @@ fn print_usage() {
     println!(
         "Usage:\n  \
          ToastWindow.exe --save      Save window state (UserPromptSubmit hook)\n  \
-         ToastWindow.exe --notify    Show notification (Stop hook)\n  \
-         ToastWindow.exe --input     Show input-required notification (Notification hook)\n\n\
-         Both modes read session_id from stdin JSON for state file isolation."
+         ToastWindow.exe --notify    Show task-completed notification (Stop hook)\n  \
+         ToastWindow.exe --input     Show input-required notification (Notification / PreToolUse hooks)\n  \
+         ToastWindow.exe --cleanup   Delete the session state file (SessionEnd hook)\n\n\
+         All modes read session_id from stdin JSON for state file isolation."
     );
 }
 
@@ -108,25 +109,73 @@ fn run_notify_mode(debug: bool) -> i32 {
 fn run_input_mode(debug: bool) -> i32 {
     let input = json::read_stdin_json();
     let session_id = json::extract_string(&input, "session_id");
-    let message = json::extract_string(&input, "message");
 
     if session_id.is_empty() {
         debug_log!("No session_id for input mode");
         return 1;
     }
 
-    debug_log!("Input mode, session: {}, message: {}", session_id, message);
+    let notification_type = json::extract_string(&input, "notification_type");
+    let tool_name = json::extract_string(&input, "tool_name");
+
+    // Filter out non-actionable notification types (auth success, MCP elicitation echoes).
+    // These don't require user attention, so we skip the toast entirely.
+    if matches!(
+        notification_type.as_str(),
+        "auth_success" | "elicitation_complete" | "elicitation_response"
+    ) {
+        debug_log!(
+            "Skipping non-actionable notification_type: {}",
+            notification_type
+        );
+        return 0;
+    }
+
+    // Decide title and message based on the actual scenario.
+    // Priority: PreToolUse tool_name > Notification notification_type > generic fallback.
+    let (title, message) = if tool_name == "AskUserQuestion" {
+        // Claude is proactively asking the user a question (with options UI).
+        let q = json::extract_first_question(&input);
+        let msg = if q.is_empty() {
+            "Claude is asking you a question".to_string()
+        } else {
+            q
+        };
+        ("Claude is Asking".to_string(), msg)
+    } else if tool_name == "ExitPlanMode" {
+        // Plan mode: Claude finished planning and wants user approval.
+        ("Plan Ready for Approval".to_string(), "Claude proposes a plan — review and approve".to_string())
+    } else {
+        let msg = json::extract_string(&input, "message");
+        let title = match notification_type.as_str() {
+            "permission_prompt" => "Permission Required",
+            "idle_prompt" => "Claude is Waiting",
+            "elicitation_dialog" => "MCP Asks",
+            _ => "Input Required",
+        };
+        let msg = if msg.is_empty() {
+            "Claude needs your input".to_string()
+        } else {
+            msg
+        };
+        (title.to_string(), msg)
+    };
+
+    debug_log!(
+        "Input mode, session: {}, tool: {}, type: {}, title: {}, message: {}",
+        session_id, tool_name, notification_type, title, message
+    );
 
     let mut cmd = format!(
         "\"{}\" --notify-show --input-mode --session \"{}\"",
         exe_path(),
         session_id
     );
-    if !message.is_empty() {
-        // Escape quotes in message (SPEC 16.2)
-        let escaped = message.replace('"', "\\\"");
-        cmd.push_str(&format!(" --message \"{}\"", escaped));
-    }
+    // Escape quotes in message and title (SPEC 16.2)
+    let escaped_msg = message.replace('"', "\\\"");
+    cmd.push_str(&format!(" --message \"{}\"", escaped_msg));
+    let escaped_title = title.replace('"', "\\\"");
+    cmd.push_str(&format!(" --title \"{}\"", escaped_title));
     if debug {
         cmd.push_str(" --debug");
     }
@@ -167,7 +216,12 @@ fn run_notify_show_mode(args: &cli::Args) -> i32 {
         } else {
             "Claude needs your input".to_string()
         };
-        ("Input Required".to_string(), msg)
+        let title = if !args.title.is_empty() {
+            args.title.clone()
+        } else {
+            "Input Required".to_string()
+        };
+        (title, msg)
     } else {
         let msg = if !st.user_prompt.is_empty() {
             st.user_prompt.clone()

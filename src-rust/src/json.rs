@@ -25,3 +25,20 @@ pub fn extract_string(json: &str, key: &str) -> String {
         .unwrap_or("")
         .to_string()
 }
+
+/// Extract the first question text from an AskUserQuestion tool's tool_input.
+/// Falls back to empty string if not present. Schema:
+/// `{ "tool_input": { "questions": [ { "question": "...", "header": "..." }, ... ] } }`
+pub fn extract_first_question(json: &str) -> String {
+    let v: serde_json::Value = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+    v.get("tool_input")
+        .and_then(|ti| ti.get("questions"))
+        .and_then(|qs| qs.get(0))
+        .and_then(|q| q.get("question").or_else(|| q.get("header")))
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string()
+}

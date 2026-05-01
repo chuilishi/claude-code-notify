@@ -72,7 +72,9 @@ claude plugin uninstall claude-code-notify
 |------|---------|------|
 | `UserPromptSubmit` | 发送消息时 | 保存当前窗口句柄、活动标签页、调用应用图标 |
 | `Stop` | Claude 完成时 | 显示"任务完成"通知（橙色边框） |
-| `Notification` | Claude 需要输入时 | 显示"需要输入"通知（黄色边框） |
+| `Notification` | Claude 需要输入时（权限确认 / 空闲提示 / MCP 询问） | 根据场景显示对应标题的通知（黄色边框），例如"Permission Required"、"Claude is Waiting"、"MCP Asks" |
+| `PreToolUse`（`AskUserQuestion` \| `ExitPlanMode`） | Claude 提问或计划完成时 | 显示"Claude is Asking" / "Plan Ready for Approval"通知 |
+| `SessionEnd` | 会话结束时 | 清理该会话的状态文件 |
 | *点击通知* | — | 激活保存的窗口并切换到正确的标签页 |
 
 ### 会话隔离
