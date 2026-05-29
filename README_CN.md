@@ -36,6 +36,16 @@ claude plugin install claude-code-notify@claude-code-notify
 
 就这样。重启 Claude Code 即可自动生效。
 
+### WSL 权限修复
+
+如果在 WSL 中安装插件后，hook 触发时报 `Permission denied`，可以给内置的 Windows 可执行文件补上执行权限：
+
+```bash
+chmod +x ~/.claude/plugins/cache/claude-code-notify/claude-code-notify/*/notifications/ToastWindow.exe
+```
+
+这是 [issue #2](https://github.com/chuilishi/claude-code-notify/issues/2) 中提到的解决方法。如果你的缓存路径使用固定版本目录，可以把 `*` 换成对应版本，例如 `1.1.0`。
+
 ---
 
 ## 📖 使用方法

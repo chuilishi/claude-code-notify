@@ -36,6 +36,16 @@ claude plugin install claude-code-notify@claude-code-notify
 
 That's it. Restart Claude Code and notifications will work automatically.
 
+### WSL Permission Fix
+
+If you install the plugin inside WSL and hooks fail with `Permission denied`, make the bundled Windows executable runnable:
+
+```bash
+chmod +x ~/.claude/plugins/cache/claude-code-notify/claude-code-notify/*/notifications/ToastWindow.exe
+```
+
+This is the workaround from [issue #2](https://github.com/chuilishi/claude-code-notify/issues/2). If your cache path uses a fixed version directory, `*` can be replaced with that version, for example `1.1.0`.
+
 ---
 
 ## 📖 Usage
